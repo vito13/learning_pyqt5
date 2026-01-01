@@ -134,6 +134,80 @@ if __name__ == "__main__":
 - 类似回调、但更安全更可靠
 - 使用编辑器可以设置默认提供的槽函数，但自定义的槽需要在代码里手动设置
 
+### 关于@pyqtSlot
+
+@pyqtSlot 不是“写不写都行的装饰器”，而是 PyQt 进入 Qt 元对象系统、获得类型、性能、线程保障的钥匙。
+
+| 维度 | 不使用 @pyqtSlot | 使用 @pyqtSlot |
+|---|---|---|
+| 是否必须 | 否 | 否（但强烈推荐） |
+| 槽类型 | 普通 Python 函数 | Qt 元对象系统中的槽 |
+| 类型信息 | 无 | 有（强类型） |
+| 信号匹配 | 运行期模糊匹配 | 连接期就可校验 |
+| 重载支持 | 不支持 | 支持（int / str 等） |
+| 执行性能 | 较慢（Python 回调） | 较快（Qt 直达槽） |
+| 线程语义 | 不明确 | 明确（自动 QueuedConnection） |
+| 跨线程安全 | 需开发者保证 | Qt 自动保证 |
+| 高频信号 | 不推荐 | 推荐 |
+| Qt/C++ 可见性 | 不可见 | 可见 |
+| Qt Designer / QML | 不支持 | 支持（部分场景） |
+| 大型工程可维护性 | 一般 | 高 |
+
+| 使用场景 | 是否推荐 @pyqtSlot |
+|---|---|
+| 按钮 clicked | 可不用 |
+| 自定义信号 | 必须 |
+| 信号重载 | 必须 |
+| 跨线程通信 | 必须 |
+| 高频信号（timer / slider） | 强烈推荐 |
+| Demo / 临时代码 | 可不用 |
+| 工程级项目 | 统一使用 |
+
+| C++ Qt | PyQt |
+|---|---|
+| slots: | @pyqtSlot |
+| 强类型槽 | 强类型槽 |
+| Meta-Object | Meta-Object |
+| 编译期检查 | 运行期检查 |
+
+### 槽函数自动连接
+
+像下面的函数名无需再手动进行信号绑定、会在setupUi() 里被 connectSlotsByName() 自动绑定。但要符合规则:
+```
+on_<objectName>_<signalName>(参数)
+
+注意objectName的里面是可以包含有下划线的...
+```
+```
+  def on_btnCalculate_clicked(self):  ##"计算总价"按钮
+      num=int(self.ui.editCount.text())
+      price=float(self.ui.editPrice.text())
+      total=num*price
+      self.ui.editTotal.setText("%.2f" %total)
+
+   @pyqtSlot(int)    ##"数量"SpinBox
+   def on_spinCount_valueChanged(self,count):
+      price=self.ui.spinPrice.value()
+      self.ui.spinTotal.setValue(count*price)
+
+   @pyqtSlot(float)     ##"单价" DoubleSpinBox
+   def on_spinPrice_valueChanged(self,price):
+      count=self.ui.spinCount.value()
+      self.ui.spinTotal.setValue(count*price)
+
+```
+
+自动连接是“约定优于配置”的快捷方式，不是类型安全机制。参数一复杂，就该放弃它
+
+| 情况 | 自动连接是否生效 | 是否安全 |
+|---|---|---|
+| 参数完全匹配 | 是 | ✅ |
+| 槽参数少于信号 | 是 | ⚠（可控） |
+| 槽参数多于信号 | 否 | ❌ |
+| 参数类型不匹配 | 连接成功 | ❌（运行期风险） |
+| 信号重载 | 不稳定 | ❌ |
+
+
 ### 自定义信号槽
 
 - Human：信号的发送者
@@ -219,3 +293,150 @@ if  __name__ == "__main__":    ##测试程序
 ## 资源文件
 
 就是将ico等res类型的文件内容以二进制形式写入文本文件里（如.py）,然后使用程序加载对应的资源名称，案例见Demo2_5Resource
+
+
+## Action
+
+- 是 Qt 用来“解耦 UI 和行为”的核心机制
+- 是“抽象出来的用户行为”，如菜单项、工具栏按钮、快捷键、都可用同一个可复用的Action代替，即可被复用的动作对象
+- QAction 主要作用：
+    - 统一管理操作（菜单、工具栏、按钮可以共用同一个 QAction）
+    - 可以设置文本、图标、快捷键、提示信息
+    - 可以连接到槽函数触发逻辑，一个 QAction实现多个入口，实现点菜单、点工具栏、按快捷键都是触发同一个 triggered()
+```
+from PyQt5.QtWidgets import QApplication, QMainWindow, QAction
+
+app = QApplication([])
+win = QMainWindow()
+
+action_exit = QAction("退出", win)
+action_exit.setShortcut("Ctrl+Q")  # 设置快捷键
+action_exit.setStatusTip("退出应用程序")
+action_exit.triggered.connect(app.quit)  # 触发槽函数
+
+menu = win.menuBar().addMenu("文件")
+menu.addAction(action_exit)
+
+win.show()
+app.exec_()
+
+这里 QAction 可以同时出现在菜单和工具栏，也可触发同一个槽函数。
+```
+
+## QActionGroup
+
+- QActionGroup 是 一组 QAction 的容器
+- 主要用于互斥行为：一组 QAction 中只能选中一个（类似单选按钮）
+- 方便统一管理多 QAction 的状态（比如启用/禁用）
+- 注意QActionGroup 本身不是 UI 元素，不显示，只有 QAction 被添加到菜单、工具栏等控件中才显示
+
+
+| 类            | 类型 | 可用场景      | 主要功能                  | 特点                    |
+| ------------ | -- | --------- | --------------------- | --------------------- |
+| QAction      | 对象 | 菜单、工具栏、按钮 | 封装操作（文本、图标、快捷键、槽）     | 可以被多个控件共享             |
+| QActionGroup | 容器 | 菜单、工具栏、按钮 | 管理一组 QAction（互斥或批量控制） | 本身不显示，支持互斥（exclusive） |
+
+下面的案例演示互斥的菜单栏选项
+
+```
+from PyQt5.QtWidgets import QApplication, QMainWindow, QAction, QActionGroup
+
+app = QApplication([])
+win = QMainWindow()
+
+menu = win.menuBar().addMenu("显示模式")
+
+# 创建互斥的 QActionGroup
+group = QActionGroup(win)
+group.setExclusive(True)  # 互斥
+
+action_percent = QAction("百分比", win, checkable=True)
+action_value = QAction("数值", win, checkable=True)
+
+group.addAction(action_percent)
+group.addAction(action_value)
+
+menu.addAction(action_percent)
+menu.addAction(action_value)
+
+action_percent.triggered.connect(lambda: print("百分比模式"))
+action_value.triggered.connect(lambda: print("数值模式"))
+
+action_percent.setChecked(True)  # 默认选中
+win.show()
+app.exec_()
+```
+
+## triggered
+
+- QAction.triggered 是 QAction 的“被激活”信号，无论菜单、工具栏还是快捷键触发，都会发送这个信号
+- triggered 会 默认传递一个 bool，表示 QAction 是否被选中（主要针对 checkable=True 的动作），对于非 checkable 的 QAction，参数一般无意义，但仍然可以接收
+- 调用action_bold.trigger() 可以在代码中手动触发动作
+
+| 功能        | 使用方式                             | 参数           | 说明              |
+| --------- | -------------------------------- | ------------ | --------------- |
+| 连接槽函数     | `action.triggered.connect(slot)` | `bool`（可选）   | 点击菜单/工具栏/快捷键时触发 |
+| checkable | `action.setCheckable(True)`      | `True/False` | 触发信号时传递当前选中状态   |
+| 手动触发      | `action.trigger()`               | 无            | 在代码里模拟用户点击动作    |
+
+
+没有使用参数的案例
+
+```
+from PyQt5.QtWidgets import QApplication, QMainWindow, QAction
+
+app = QApplication([])
+win = QMainWindow()
+
+# 创建一个 QAction
+action_exit = QAction("退出", win)
+action_exit.setShortcut("Ctrl+Q")
+
+# 连接 triggered 信号
+action_exit.triggered.connect(lambda checked=False: print("触发退出"))
+
+# 菜单栏添加
+menu = win.menuBar().addMenu("文件")
+menu.addAction(action_exit)
+
+win.show()
+app.exec_()
+```
+
+使用参数的案例
+
+```
+from PyQt5.QtWidgets import QApplication, QMainWindow, QAction
+
+app = QApplication([])
+win = QMainWindow()
+
+# 可选中 QAction
+action_bold = QAction("加粗", win, checkable=True)
+
+def on_bold_triggered(checked):
+    if checked:
+        print("文字加粗")
+    else:
+        print("取消加粗")
+
+action_bold.triggered.connect(on_bold_triggered)
+
+menu = win.menuBar().addMenu("格式")
+menu.addAction(action_bold)
+
+win.show()
+app.exec_()
+```
+
+# UI
+
+## self.ui
+
+- 通过designer创建的ui可通过self.ui.xxx进行访问
+- 代码里动态创建的控件，则直接self.__xxx即可，即内部的变量使用2个下划线
+
+## QPushButton
+
+- checkable = true是可以按下与弹起的按钮
+- 当一个 QPushButton，checkable = true、autoExclusive = true，且和其他同类按钮处在同一个父对象下，它们会自动组成一个“互斥组”。即同一时间只能有一个按钮处于 checked 状态，类似radio
