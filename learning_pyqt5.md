@@ -2,9 +2,9 @@
 
 ## 安装QT
 
-- 需要从官网下载在线安装包或离线包
+- 需要从官网下载在线安装包并挂接镜像安装
 ```
-qt-online-installer-windows-x64-4.10.0.exe
+qt-online-installer-windows-x64-4.10.0.exe --mirror https://mirrors.ustc.edu.cn/qtproject
 ```
 
 ## python 3.7
@@ -129,9 +129,117 @@ if __name__ == "__main__":
  └── uic.loadUi("xxx.ui", self)
 ```
 
-## 信号槽
+## 资源文件
 
-- 类似回调、但更安全更可靠
+就是将ico等res类型的文件内容以二进制形式写入文本文件里（如.py）,然后使用程序加载对应的资源名称，案例见Demo2_5Resource
+
+## 信号 signal
+
+- 本质是“某件事发生了”，就会产生一个信号
+- 可以当成是个“广播”，如“我被点了！”、“当前项变了！”、“状态被勾选了！”，在代码里就类似triggered()、clicked()、currentItemChanged()、stateChanged()，不同对象发不同信号
+- Action、Button、Tree、Checkbox等都可以发出信号
+
+| 发信号的对象  | 常见信号   | 含义     |
+| ----------- | -------------------- | ------ |
+| QAction     | triggered()          | 行为被触发  |
+| QPushButton | clicked()            | 按钮被点   |
+| QTreeWidget | currentItemChanged() | 当前节点变化 |
+| QCheckBox   | stateChanged()       | 勾选状态变化 |
+
+
+## Action
+
+- QAction 是一个“行为（Action）对象”，它代表的是“用户要做的一件事”，比如删除、打开、保存、放大、缩小
+- 如点菜单、点工具栏、按快捷键可能都是同一个QAction，会发出相同的信号，并且QAction也可以自主发出信号
+- 使用.triggered.connect()设置对应的槽函数，也可以使用语法糖达到进行自动connect的效果
+
+```
+from PyQt5.QtWidgets import QApplication, QMainWindow, QAction
+
+app = QApplication([])
+win = QMainWindow()
+
+action_exit = QAction("退出", win)
+action_exit.setShortcut("Ctrl+Q")  # 设置快捷键
+action_exit.setStatusTip("退出应用程序")
+action_exit.triggered.connect(app.quit)  # 设置槽函数
+
+menu = win.menuBar().addMenu("文件")
+menu.addAction(action_exit)
+
+win.show()
+app.exec_()
+
+这里 QAction 可以同时出现在菜单和工具栏，也可触发同一个槽函数。
+```
+
+
+## triggered
+
+- QAction.triggered 是 QAction 的“被激活”信号，无论菜单、工具栏还是快捷键触发，都会发送这个信号
+- triggered 会 默认传递一个 bool，表示 QAction 是否被选中（主要针对 checkable=True 的动作），对于非 checkable 的 QAction，参数一般无意义，但仍然可以接收
+- 调用action_bold.trigger() 可以在代码中手动触发动作
+
+| 功能        | 使用方式                             | 参数           | 说明              |
+| --------- | -------------------------------- | ------------ | --------------- |
+| 连接槽函数     | `action.triggered.connect(slot)` | `bool`（可选）   | 点击菜单/工具栏/快捷键时触发 |
+| checkable | `action.setCheckable(True)`      | `True/False` | 触发信号时传递当前选中状态   |
+| 手动触发      | `action.trigger()`               | 无            | 在代码里模拟用户点击动作    |
+
+
+没有使用参数的案例
+
+```
+from PyQt5.QtWidgets import QApplication, QMainWindow, QAction
+
+app = QApplication([])
+win = QMainWindow()
+
+# 创建一个 QAction
+action_exit = QAction("退出", win)
+action_exit.setShortcut("Ctrl+Q")
+
+# 连接 triggered 信号
+action_exit.triggered.connect(lambda checked=False: print("触发退出"))
+
+# 菜单栏添加
+menu = win.menuBar().addMenu("文件")
+menu.addAction(action_exit)
+
+win.show()
+app.exec_()
+```
+
+使用参数的案例
+
+```
+from PyQt5.QtWidgets import QApplication, QMainWindow, QAction
+
+app = QApplication([])
+win = QMainWindow()
+
+# 可选中 QAction
+action_bold = QAction("加粗", win, checkable=True)
+
+def on_bold_triggered(checked):
+    if checked:
+        print("文字加粗")
+    else:
+        print("取消加粗")
+
+action_bold.triggered.connect(on_bold_triggered)
+
+menu = win.menuBar().addMenu("格式")
+menu.addAction(action_bold)
+
+win.show()
+app.exec_()
+```
+
+## 槽 slot
+
+- 是个被调的函数，类似回调，但更安全更可靠
+- 信号都会有对应的槽函数进行处理
 - 使用编辑器可以设置默认提供的槽函数，但自定义的槽需要在代码里手动设置
 
 ### 关于@pyqtSlot
@@ -170,13 +278,43 @@ if __name__ == "__main__":
 | Meta-Object | Meta-Object |
 | 编译期检查 | 运行期检查 |
 
-### 槽函数自动连接
+### 自动绑定槽
 
-像下面的函数名无需再手动进行信号绑定、会在setupUi() 里被 connectSlotsByName() 自动绑定。但要符合规则:
+下面两句作用一样
+
+
+- 手动设置槽
+
 ```
-on_<objectName>_<signalName>(参数)
+self.ui.actTree_DeleteItem.triggered.connect(
+    self.on_actTree_DeleteItem_triggered
+)
 
+```
+- 自动绑定，会在setupUi() 里被 connectSlotsByName() 扫描符合“on_xxx_signal”的会自动绑定
+```
+@pyqtSlot()
+def on_actTree_DeleteItem_triggered(self):
+
+语法糖：on_xxx_signal
+on_<对象objectName>_<信号名>(参数)
 注意objectName的里面是可以包含有下划线的...
+
+合格的名命：
+def on_actTree_DeleteItem_triggered(self):
+def on_actTree_ScanItems_triggered(self):
+def on_treeFiles_currentItemChanged(self, current, previous):
+def on_actZoomFitH_triggered(self):
+
+
+用户点击菜单
+↓
+QAction(actTree_DeleteItem)
+        │
+        │ triggered()
+        ▼
+Qt 自动找到，执行你写的代码
+on_actTree_DeleteItem_triggered()
 ```
 ```
   def on_btnCalculate_clicked(self):  ##"计算总价"按钮
@@ -290,39 +428,6 @@ if  __name__ == "__main__":    ##测试程序
 
 ```
 
-## 资源文件
-
-就是将ico等res类型的文件内容以二进制形式写入文本文件里（如.py）,然后使用程序加载对应的资源名称，案例见Demo2_5Resource
-
-
-## Action
-
-- 是 Qt 用来“解耦 UI 和行为”的核心机制
-- 是“抽象出来的用户行为”，如菜单项、工具栏按钮、快捷键、都可用同一个可复用的Action代替，即可被复用的动作对象
-- QAction 主要作用：
-    - 统一管理操作（菜单、工具栏、按钮可以共用同一个 QAction）
-    - 可以设置文本、图标、快捷键、提示信息
-    - 可以连接到槽函数触发逻辑，一个 QAction实现多个入口，实现点菜单、点工具栏、按快捷键都是触发同一个 triggered()
-```
-from PyQt5.QtWidgets import QApplication, QMainWindow, QAction
-
-app = QApplication([])
-win = QMainWindow()
-
-action_exit = QAction("退出", win)
-action_exit.setShortcut("Ctrl+Q")  # 设置快捷键
-action_exit.setStatusTip("退出应用程序")
-action_exit.triggered.connect(app.quit)  # 触发槽函数
-
-menu = win.menuBar().addMenu("文件")
-menu.addAction(action_exit)
-
-win.show()
-app.exec_()
-
-这里 QAction 可以同时出现在菜单和工具栏，也可触发同一个槽函数。
-```
-
 ## QActionGroup
 
 - QActionGroup 是 一组 QAction 的容器
@@ -367,68 +472,6 @@ win.show()
 app.exec_()
 ```
 
-## triggered
-
-- QAction.triggered 是 QAction 的“被激活”信号，无论菜单、工具栏还是快捷键触发，都会发送这个信号
-- triggered 会 默认传递一个 bool，表示 QAction 是否被选中（主要针对 checkable=True 的动作），对于非 checkable 的 QAction，参数一般无意义，但仍然可以接收
-- 调用action_bold.trigger() 可以在代码中手动触发动作
-
-| 功能        | 使用方式                             | 参数           | 说明              |
-| --------- | -------------------------------- | ------------ | --------------- |
-| 连接槽函数     | `action.triggered.connect(slot)` | `bool`（可选）   | 点击菜单/工具栏/快捷键时触发 |
-| checkable | `action.setCheckable(True)`      | `True/False` | 触发信号时传递当前选中状态   |
-| 手动触发      | `action.trigger()`               | 无            | 在代码里模拟用户点击动作    |
-
-
-没有使用参数的案例
-
-```
-from PyQt5.QtWidgets import QApplication, QMainWindow, QAction
-
-app = QApplication([])
-win = QMainWindow()
-
-# 创建一个 QAction
-action_exit = QAction("退出", win)
-action_exit.setShortcut("Ctrl+Q")
-
-# 连接 triggered 信号
-action_exit.triggered.connect(lambda checked=False: print("触发退出"))
-
-# 菜单栏添加
-menu = win.menuBar().addMenu("文件")
-menu.addAction(action_exit)
-
-win.show()
-app.exec_()
-```
-
-使用参数的案例
-
-```
-from PyQt5.QtWidgets import QApplication, QMainWindow, QAction
-
-app = QApplication([])
-win = QMainWindow()
-
-# 可选中 QAction
-action_bold = QAction("加粗", win, checkable=True)
-
-def on_bold_triggered(checked):
-    if checked:
-        print("文字加粗")
-    else:
-        print("取消加粗")
-
-action_bold.triggered.connect(on_bold_triggered)
-
-menu = win.menuBar().addMenu("格式")
-menu.addAction(action_bold)
-
-win.show()
-app.exec_()
-```
-
 # UI
 
 ## self.ui
@@ -440,3 +483,242 @@ app.exec_()
 
 - checkable = true是可以按下与弹起的按钮
 - 当一个 QPushButton，checkable = true、autoExclusive = true，且和其他同类按钮处在同一个父对象下，它们会自动组成一个“互斥组”。即同一时间只能有一个按钮处于 checked 状态，类似radio
+
+# Model View
+
+把“数据”和“怎么显示、怎么操作”彻底分开。
+
+## Model
+
+- 只负责数据从哪来（内存 / 文件 / 数据库）、有多少行、多少列、某一行某一列是什么值、数据能不能改
+- 不关心显示成列表还是树、用什么颜色、用户点没点
+- 三种基础 Model如下
+
+| 类型             | 结构        | 典型 View      | 适合场景   |
+| -------------- | --------- | ------------ | ------ |
+| **ListModel**  | 一维（行）     | `QListView`  | 简单列表   |
+| **TableModel** | 二维（行 × 列） | `QTableView` | 表格数据   |
+| **TreeModel**  | 层级结构      | `QTreeView`  | 树 / 目录 |
+
+### ListModel 列表模型
+
+```
+0
+1
+2
+3
+...
+```
+- 只实现“行”，只有“行”，没有“列”，每一行就是一个 item
+- 典型用途：文件列表、下拉选项、日志列表、简单菜单
+- 常见 Model: QStringListModel（最简单）、QStandardItemModel（只用一列）
+- 不能表达多字段数据
+```
+model = QStringListModel(["A", "B", "C"])
+view = QListView()
+view.setModel(model)
+```
+
+### TableModel 表格模型
+```
+行\列 | 姓名 | 年龄 | 职位
+-------------------------
+0     | 张三 |  20  | 开发
+1     | 李四 |  22  | 测试
+```
+- 行 + 列的二维结构，每个单元格都有明确坐标 (row, column)
+- 典型用途：Excel 风格数据、配置表、统计结果、参数列表
+- 常见 Model：QStandardItemModel、自定义 QAbstractTableModel
+- 不能表达父子关系
+```
+model = QStandardItemModel(2, 3)
+model.setHorizontalHeaderLabels(["姓名", "年龄", "职位"])
+```
+### TreeModel 树模型
+
+```
+root
+ ├─ A
+ │   ├─ A1
+ │   └─ A2
+ └─ B
+     └─ B1
+```
+- 父子关系、每个节点本身也是“一行数据”、每个节点仍然可以有多列
+- 常见 Model：QStandardItemModel、QFileSystemModel、自定义 QAbstractItemModel
+- 典型用途：文件树、目录结构、组织架构、配置层级
+- TreeModel 本质上比 TableModel 多了 3 个问题：
+   - 某个 item 的 parent 是谁
+   - 有多少 child
+   - child 在 parent 下的 row
+
+### Model Index
+
+- 是指向 Model 中某一个数据项的位置描述，类似句柄
+- QModelIndex 里装了row, column, parent, model，可理解成树结构里的“绝对地址”，即在某个父节点下，第 row 行、第 column 列的那个数据项
+
+   | 信息         | 含义         |
+   | ---------- | ---------- |
+   | `row()`    | 在父节点下的第几行  |
+   | `column()` | 第几列        |
+   | `parent()` | 父节点是谁      |
+   | `model()`  | 属于哪个 Model |
+- View和Model 都可获取 Index，但不同的model里Index内容也不一样
+   ```
+   index = view.currentIndex()
+   index = model.index(row, column, parentIndex)
+   ```
+- 很多函数的参数不是数据，而是index。槽函数也有会使用index
+   ```
+   def on_treeView_clicked(self, index):
+      print(index.row(), index.column())
+   ```
+
+### Item Role
+
+- 一个数据项（item）不是一个值，而是一组「属性集合」；每个属性通过一个 Role 来区分。
+- View 会根据不同场景要不同 role，同一个 index，不同 role，返回不同数据
+   - 显示时 → DisplayRole
+   - 编辑时 → EditRole
+   - 绘制图标 → DecorationRole
+   - 排序时 → UserRole
+- 不是每个 Role 都必须存在、没设置的 Role，Model 可以返回空
+
+| 属性   | Role                  |
+| ---- | --------------------- |
+| 显示文本 | Qt::DisplayRole       |
+| 编辑值  | Qt::EditRole          |
+| 图标   | Qt::DecorationRole    |
+| 文字颜色 | Qt::ForegroundRole    |
+| 背景色  | Qt::BackgroundRole    |
+| 对齐方式 | Qt::TextAlignmentRole |
+| 是否可选 | Qt::UserRole + n      |
+
+```
+model.setData(index, "文件名", Qt.DisplayRole)
+model.setData(index, QIcon("file.png"), Qt.DecorationRole)
+model.setData(index, "原始值", Qt.EditRole)
+model.setData(index, "这是一个文件", Qt.ToolTipRole)
+model.setData(index, Qt.AlignCenter, Qt.TextAlignmentRole)
+
+value = model.data(index, Qt.DisplayRole)
+
+
+View
+ ↓  (QModelIndex)
+Model (QStandardItemModel)
+ ↓
+Item (QStandardItem)
+ ↓
+Role → Value
+
+```
+
+### QStandardItem
+
+- 是个多属性的单个数据项，支持多 role、支持多列、支持 parent / child（树结构）、一个自带字典（role→value）的节点对象
+- 可被当成：表格里的一个单元格、树里的一个节点、列表里的一行
+
+```
+item = QStandardItem()
+item.setText("main.cpp")                  # DisplayRole
+item.setIcon(QIcon("file.png"))           # DecorationRole
+item.setToolTip("源文件")                  # ToolTipRole
+item.setData("/src/main.cpp", Qt.UserRole)
+
+
+item.text()
+item.setText()
+item.data(role)
+item.setData(value, role)
+item.appendRow(child)
+item.child(row, column)
+item.parent()
+```
+
+### QStandardItemModel
+
+- 一个基于 QStandardItem 的通用 Model 实现（类比资源管理器样式，每一行都可以是棵树）
+- 即能按行操作，也可按树操作
+- 一个 现成的 Model 实现、自动处理
+   - QModelIndex
+   - rowCount / columnCount
+   - index() / parent()
+   - data() / setData()
+   - Model ↔ View 通知刷新
+
+```
+model = QStandardItemModel()
+model.setHorizontalHeaderLabels(["名称", "类型"])
+
+root = model.invisibleRootItem()
+
+# 第 1 行（根节点下）
+folder = QStandardItem("src")
+type1  = QStandardItem("folder")
+root.appendRow([folder, type1])
+
+# 第 2 行（根节点下）
+file1 = QStandardItem("readme.md")
+type2 = QStandardItem("file")
+root.appendRow([file1, type2])
+
+# 给“src”这一行，再加子行（树）
+child = QStandardItem("main.cpp")
+childType = QStandardItem("file")
+folder.appendRow([child, childType])
+
+```
+
+- 适用于：
+   - 数据量不巨大
+   - 需要快速做 UI
+   - 树结构
+   - 原型 / 工具类项目
+   - 不想写一堆模板代码
+- 不适用于：（应使用 QAbstractItemModel / QAbstractTableModel）
+   - 百万级数据
+   - 严格内存控制
+   - 数据本身已经是复杂结构
+   - 性能瓶颈明显
+
+## View
+
+- 只负责整体数据如何呈现，如行高、列宽、滚动条、选中了哪一行
+- 常见View如QListView、QTableView、QTreeView
+
+## Delegate
+
+- Delegate 是 View 的“画笔”和“编辑器”，也是 Role 真正被“用起来”的地方。
+- 从 model 拿 role 数据，根据 role 决定绘制和编辑方式，负责三件事
+
+   | 职责           | 说明      |
+   | ------------ | ------- |
+   | paint        | 怎么画     |
+   | sizeHint     | 多大      |
+   | createEditor | 用什么控件编辑 |
+
+- 默认 Delegate：文本 → QLabel，编辑 → QLineEdit，但也可以改用下拉框、复选框、进度条、按钮
+- 何时一定要写 Delegate
+   - 单元格显示不是纯文本、进度条、按钮、星级、彩条
+   - 编辑方式不是默认的、下拉框、日期、范围限制
+   - 同一数据，多种显示风格
+- 常见 Delegate 类型：QStyledItemDelegate（推荐）、QItemDelegate（老）
+
+```
+class ProgressDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        value = index.data(Qt.UserRole)
+
+        opt = QStyleOptionProgressBar()
+        opt.rect = option.rect
+        opt.minimum = 0
+        opt.maximum = 100
+        opt.progress = value
+        opt.text = f"{value}%"
+        opt.textVisible = True
+
+        QApplication.style().drawControl(
+            QStyle.CE_ProgressBar, opt, painter
+        )
+```
