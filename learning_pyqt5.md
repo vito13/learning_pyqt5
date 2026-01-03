@@ -146,6 +146,12 @@ if __name__ == "__main__":
 | QTreeWidget | currentItemChanged() | 当前节点变化 |
 | QCheckBox   | stateChanged()       | 勾选状态变化 |
 
+- 发信号也可以手动调用，[见案例 自定义信号槽](##自定义信号槽)
+
+```
+def mouseDoubleClickEvent(self, event):
+    self.doubleClicked.emit()
+```
 
 ## Action
 
@@ -344,7 +350,6 @@ on_actTree_DeleteItem_triggered()
 | 槽参数多于信号 | 否 | ❌ |
 | 参数类型不匹配 | 连接成功 | ❌（运行期风险） |
 | 信号重载 | 不稳定 | ❌ |
-
 
 ### 自定义信号槽
 
@@ -722,3 +727,234 @@ class ProgressDelegate(QStyledItemDelegate):
             QStyle.CE_ProgressBar, opt, painter
         )
 ```
+
+# event
+
+## event对象
+
+- 事件是一个对象（基类QEvent 及其子类），描述的是「发生了什么事」，由 Qt 内部事件循环自动产生并分发
+   
+   | 常见事件举例   | 对应事件类          |
+   | ------ | -------------- |
+   | 鼠标按下   | `QMouseEvent`  |
+   | 键盘按键   | `QKeyEvent`    |
+   | 窗口重绘   | `QPaintEvent`  |
+   | 窗口大小变化 | `QResizeEvent` |
+   | 定时器触发  | `QTimerEvent`  |
+   | 窗口关闭   | `QCloseEvent`  |
+- 所有QObject都有QObject::event(QEvent *event)，内部根据类型调用不同事件的handler，QObject仅处理“非界面事件”，比如：定时器、自定义事件、对象销毁，QWidget则增加了鼠标、键盘、绘制、窗口显示 / 隐藏等处理
+   ```
+   QmyLabel
+   ↓
+   QLabel::event()
+      ↓
+   QWidget::event()
+      ↓
+   QObject::event()
+   ```
+- 用户可重载具体的事件处理函数进行自定义处理，不重载的话，每个具体事件也都有默认的处理，其实也可重载父类的event做类似hook的效果，或者在子类里调用父类的handler
+
+   ```
+   操作系统鼠标按下
+        ↓
+   Qt 生成 QMouseEvent
+         ↓
+   Qt 找到被点击的 QWidget
+         ↓
+   调用 QWidget::event(event)
+         ↓
+   event() 判断：这是鼠标按下事件
+         ↓
+   event() 内部调用 mousePressEvent(event)
+   ```
+- 事件处理函数总是返回book，T则代表处理了，无需继续传递给上层了
+
+## event与signal
+
+- 系统先产生event，调用对应的具体handler，handler里emit signal、接着调用对应的槽
+- 槽才是真正进行业务处理的地方，完美解决了event与业务的解耦，实现了信号化封装
+
+   ```
+   [ 操作系统 ]
+         ↓
+   [ QMouseEvent ]
+         ↓
+   [ QLabel::event() ]
+         ↓
+   [ QmyLabel::mouseDoubleClickEvent ]
+         ↓
+   [ emit doubleClicked() ]
+         ↓
+   [ QmyWidget::do_doubleClicked ]
+   ```
+- event对应的handler只有一个，但可以emit多个signal，每个signal也可以有多个槽进行处理（正确的设计思想）
+- 下面的案例演示了
+   - Qt 检测到鼠标双击
+   - Qt 调用 QLabel::event()
+   - event() 识别出是 MouseButtonDblClick
+   - Qt 调用你重写的 mouseDoubleClickEvent
+   - 事件处理函数里没直接写业务逻辑，而是emit doubleClicked()，这一步完成了：“底层事件 → 高层信号” 的转换
+
+   ```
+   import sys
+
+   from PyQt5.QtWidgets import  QApplication, QWidget,QLabel
+
+   from PyQt5.QtCore import  pyqtSignal
+
+   from PyQt5.QtGui import    QMouseEvent, QFont
+
+
+   ## 自定义标签类，自定义了doubleClicked()信号
+   class QmyLabel(QLabel): 
+      doubleClicked = pyqtSignal()  ##自定义信号
+      
+      def mouseDoubleClickEvent(self,event):    ##双击事件的处理
+         self.doubleClicked.emit()
+         
+
+   class QmyWidget(QWidget):
+      def __init__(self, parent=None):
+         super().__init__(parent) 
+         self.resize(280,150)          
+         self.setWindowTitle("Demo5_2,事件与信号")
+
+         LabHello = QmyLabel(self) 
+         LabHello.setText("双击我啊")
+
+         font = LabHello.font()
+         font.setPointSize(14)  
+         font.setBold(True)     
+         LabHello.setFont(font) 
+         size=LabHello.sizeHint() 
+         LabHello.setGeometry(70, 60, size.width(), size.height())
+      
+         LabHello.doubleClicked.connect(self.do_doubleClicked)
+
+      def do_doubleClicked(self):  ##标签的槽函数
+         print("标签被双击了")
+
+      def mouseDoubleClickEvent(self,event): ##双击事件的处理
+         print("窗口双击事件响应")
+         
+      
+      
+   ##  ============窗体测试程序 =================
+   if  __name__ == "__main__":  
+      app = QApplication(sys.argv) 
+      form=QmyWidget() 
+      form.show()
+      sys.exit(app.exec_())
+   ```
+
+## eventFilter
+
+- 对当前对象管理的子对象进行消息预处理的机制
+- 可以做到不破环子对象的实现，且额外添加控制逻辑
+- 使用时先定义过滤器函数（被重载的虚函数、返回T则截断了，见下代码），然后进行安装即可
+- 一个过滤器可以监听多个对象，一个对象也可以被多个过滤器监听
+
+```
+import sys
+
+from PyQt5.QtWidgets import  QApplication,  QWidget, qApp
+
+from PyQt5.QtCore import  Qt,QEvent
+
+##from PyQt5.QtGui import  QKeyEvent
+
+from ui_Widget import Ui_Widget
+
+class QmyWidget(QWidget): 
+   def __init__(self, parent=None):
+      super().__init__(parent)   #调用父类构造函数，创建窗体
+      self.ui=Ui_Widget()        #创建UI对象
+      self.ui.setupUi(self)      #构造UI界面
+
+      self.ui.LabHover.installEventFilter(self)
+      self.ui.LabDBClick.installEventFilter(self)
+      qApp.processEvents()
+
+##  ==================event处理函数=================================
+   def eventFilter(self,watched,event):
+      if (watched==self.ui.LabHover):     #上面的QLabel组件
+         if (event.type()==QEvent.Enter): #鼠标光标进入
+            self.ui.LabHover.setStyleSheet("background-color: rgb(170, 255, 255);")
+         elif (event.type()==QEvent.Leave):     #鼠标光标移出
+            self.ui.LabHover.setStyleSheet("")
+            self.ui.LabHover.setText("靠近我，点击我")
+         elif (event.type()==QEvent.MouseButtonPress):   #鼠标按键按下
+            self.ui.LabHover.setText("button pressed")
+         elif (event.type()==QEvent.MouseButtonRelease): #鼠标按键释放
+            self.ui.LabHover.setText("button released")
+
+      if (watched==self.ui.LabDBClick):   #下面的QLabel组件
+         if (event.type()==QEvent.Enter):
+            self.ui.LabDBClick.setStyleSheet("background-color: rgb(85, 255, 127);")
+         elif (event.type()==QEvent.Leave):
+            self.ui.LabDBClick.setStyleSheet("") 
+            self.ui.LabDBClick.setText("可双击的标签")
+         elif (event.type()==QEvent.MouseButtonDblClick):   #鼠标双击
+            self.ui.LabDBClick.setText("double clicked")
+
+      return super().eventFilter(watched,event)
+      ##      return True  
+##  =============自定义槽函数===============================        
+
+   
+##  ============窗体测试程序 ================================
+if  __name__ == "__main__":     
+   app = QApplication(sys.argv)
+   form=QmyWidget()            
+   form.show()
+   sys.exit(app.exec_())
+```
+
+## processEvents
+
+- 当queue里很多event待处理时候常常会ui无反应，最好是设计为多线程来解决
+- 另外也可以使用processEvents函数先对某类event进行处理，其提供了几个分类可以先处理
+- 案例待完善
+
+# 拖放
+
+待完善
+
+# 绘图
+
+## Window、Viewport
+
+- Window：逻辑坐标空间（logical coordinate system），默认尺寸是QWidget的逻辑大小，即widget.width() × widget.height()，可以理解为要绘制的内容的全景的尺寸
+- Viewport：设备坐标空间（device coordinate system），默认尺寸是逻辑大小 × devicePixelRatioF()，渲染后输出到的窗口尺寸，与window有映射公式
+
+## 映射公式
+
+```
+x_device = (x_window - window.left) * viewport.width / window.width + viewport.left
+y_device = (y_window - window.top)  * viewport.height / window.height + viewport.top
+```
+
+## 坐标系变化
+
+- 绘图时使用的都是逻辑坐标，即逻辑像素DIP，与设备无法（防止DPI问题，是为了抽象出不同设备，做到可移植，设备坐标只存在于 Qt 内部的最后一步）
+- 在默认不做任何变化的情况下，QPainter 的坐标系以当前绘制控件（QWidget）自身的左上角为 (0, 0)。即Window的尺寸等于QWidget尺寸，甚至viewport也一样，都是1:1
+   - 假如当前都是300*200，从原点画线到右下角将占满整个viewport
+   - 仅调用setWindow(0, 0, 600, 400)，线条终点在viewport中心，类似拉远了相机，看到的视野变大了，实现了缩放，适用于整体的缩放
+   - 仅调用setWindow(-150, -100, 300, 200)，线条起点来到了viewport中心，相当于平移了相机，适用于整体滚动操作
+   - 仅调用setViewport(150, 100, 300, 200)，线条起点在viewport中心，虽然也是缩放了，但没有改变相机，而是把原占满viewport的内容缩小为原1/4，并且移动到了右下角的格子，即改变了到视口的映射，适用于画中画、分屏的效果
+ 
+- 所有操作都不是在动世界，而是在动“怎么看世界”的相机
+   | 概念       | 类比      |
+   | -------- | ------- |
+   | 平移       | 移动相机|
+   | 缩放       | 拉近 / 拉远相机 |
+   | 旋转       | 转相机     |
+
+
+
+
+
+ 
+
+
+
