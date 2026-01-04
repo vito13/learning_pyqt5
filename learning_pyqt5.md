@@ -687,6 +687,23 @@ folder.appendRow([child, childType])
    - 数据本身已经是复杂结构
    - 性能瓶颈明显
 
+
+### QItemSelectionModel
+
+- Model只管数据、View只管怎么画，所以需要专门管理「当前项、选中项」的QItemSelectionModel对象，注意当前和选中的概念是不同的
+
+   | 概念       | 含义   |
+   | -------- | ---- |
+   | current  | 光标所在格子，current 可以不在 selected 里|
+   | selected | 被选中的N个格子，selected 可以有多个，但 current 只有一个 |
+
+- 常用信号
+   - currentChanged：单元格焦点变化（适合更新按钮状态、检测是否有脏数据）
+   - currentRowChanged：行变了（适合做表单切换、加载照片、Mapper 更新）
+   - selectionChanged：选中的内容变了（多选场景、拖选、框选时候）
+
+- SelectionModel基于view，调用self.ui.tableView.setSelectionModel(self.selModel)进行绑定，同一SelectionModel可绑到多个view里
+
 ## View
 
 - 只负责整体数据如何呈现，如行高、列宽、滚动条、选中了哪一行
@@ -953,8 +970,304 @@ y_device = (y_window - window.top)  * viewport.height / window.height + viewport
 
 
 
+# QT SQL
 
- 
+## 分类
+
+- QSqlDatabase   连接
+- QSqlQuery      执行 SQL
+- QSqlTableModel 表模型
+- QDataWidgetMapper 表单映射
+- QSqlRecord  一行记录
+
+| Model                        | 是否可改 | 说明          |
+| ---------------------------- | ---- | ----------- |
+| QAbstractItemModel || SQL 抽象接口       |
+| QStandardItemModel || 内存表            |
+| **QSqlQueryModel**           | ❌ 只读SQL 结果集 | 任意复杂 SQL 查询结果 |
+| **QSqlTableModel**           | ✅ 可改 | 自动 CRUD 表模型     |
+| **QSqlRelationalTableModel** | ✅ 可改 | 单表 + 外键     |
+
+## SQLite
+
+QT自带SQLite
+
+## QSqlQueryModel
+
+- 关键词只有三个：SQL 查询、结果集、只读。即可以把“一条 SQL 查询结果”包装成 Qt 的 Model（只读）
+   ```
+   数据库
+   ↓
+   QSqlQuery  （执行 SQL）
+   ↓
+   QSqlQueryModel  （结果 → Model）
+   ↓
+   QTableView / QListView （到 Model 为止，不负责写库）
+   ```
+- 继承自QAbstractItemModel，有 rowCount / columnCount、有 index / data、有 headerData
+- 它和 QSqlTableModel 的“本质区别”
+  
+   | 对比项     | QSqlQueryModel | QSqlTableModel |
+   | ------- | -------------- | -------------- |
+   | SQL 自由度 | ⭐⭐⭐⭐⭐          | ⭐              |
+   | 是否可写    | ❌              | ✅              |
+   | 多表      | ✅              | ❌              |
+   | 自动 CRUD | ❌              | ✅              |
+   | 本质      | 查询结果           | 表对象            |
+
+案例演示了在内存建库、加载读取并呈现
+
+```
+import sys
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTableView
+from PyQt5.QtSql import QSqlDatabase, QSqlQuery, QSqlQueryModel
+
+class Demo(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("QSqlQueryModel 示例（内存数据库）")
+        self.resize(400, 300)
+
+        layout = QVBoxLayout(self)
+        view = QTableView(self)
+        layout.addWidget(view)
+
+        # 1️⃣ 创建 SQLite 内存数据库（无需安装）
+        db = QSqlDatabase.addDatabase("QSQLITE")
+        db.setDatabaseName(":memory:")
+
+        if not db.open():
+            print("数据库打开失败")
+            return
+
+        # 2️⃣ 用 QSqlQuery 建表 & 插数据
+        query = QSqlQuery()
+
+        query.exec("""
+            CREATE TABLE user (
+                id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                age  INTEGER
+            )
+        """)
+
+        query.exec("INSERT INTO user (name, age) VALUES ('Alice', 20)")
+        query.exec("INSERT INTO user (name, age) VALUES ('Bob', 30)")
+        query.exec("INSERT INTO user (name, age) VALUES ('Charlie', 25)")
+
+        # 3️⃣ 使用 QSqlQueryModel（只读）
+        model = QSqlQueryModel()
+        model.setQuery("SELECT id, name, age FROM user")
+
+        # 设置表头（可选，但推荐）
+        model.setHeaderData(0, 1, "ID")
+        model.setHeaderData(1, 1, "姓名")
+        model.setHeaderData(2, 1, "年龄")
+
+        # 4️⃣ 绑定到 View
+        view.setModel(model)
 
 
 
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    w = Demo()
+    w.show()
+    sys.exit(app.exec_())
+```
+
+## QSqlTableModel
+
+- 相当于记录集的作用。负责和数据库直接打交道、执行SELECT / INSERT / UPDATE / DELETE等操作、记录“脏数据”（isDirty），可通过tabModel.setEditStrategy设置提交策略，如立即或非立即等
+
+
+- 
+```
+打开库
+self.DB=QSqlDatabase.addDatabase("QSQLITE") 
+self.DB.setDatabaseName(dbFilename) 
+self.DB.open()
+
+打开表
+self.ui.tableView.setModel(self.tabModel)
+self.tabModel = QSqlTableModel(self, self.DB)
+self.tabModel.setTable("employee")
+self.tabModel.setEditStrategy(QSqlTableModel.OnManualSubmit)
+self.tabModel.select()
+
+获取字段名、设置字段名到view的header
+
+设置model
+
+```
+
+## QDataWidgetMapper
+
+- 作用是把数据表的字段与对应的控件建立映射，当前行变了后，SelectionModel发出currentRowChanged，需要手动调用mapper，这样控件内容就会自动更新了
+
+```
+self.mapper = QDataWidgetMapper()
+self.mapper.setModel(self.tabModel)
+self.mapper.addMapping(self.ui.dbSpinEmpNo, self.fldNum["empNo"])
+self.mapper.addMapping(self.ui.dbEditName,  self.fldNum["Name"])
+self.mapper.addMapping(self.ui.dbComboSex,  self.fldNum["Gender"])
+
+def do_currentRowChanged(self, current, previous):
+    self.mapper.setCurrentIndex(current.row())
+```
+
+- 通过 QSqlTableModel + View + Mapper，可以完整实现单表的增删改查，基本无需再手写 SQL。但一旦跨表、统计、性能、事务，就必须回到 QSqlQuery。
+
+## QSqlRelationalTableModel
+
+- 继承自QSqlTableModel，支持“外键关联”的表模型，使用setRelation设置
+- 常用函数
+
+   | 函数                                               | 功能                         |
+   | ------------------------------------------------ | -------------------------- |
+   | `setRelation(column, QSqlRelation(...))`         | 设置外键关联                     |
+   | `relation(column)`                               | 获取 QSqlRelation 对象         |
+   | `setJoinMode(QSqlRelationalTableModel.LeftJoin)` | 关联表查询方式，默认左连接              |
+   | `submitAll()`                                    | 提交修改（增删改）                  |
+   | `record(row)`                                    | 获取一行，仍然是 QSqlRecord（字段值原始） |
+- 和 QSqlTableModel 的对比总结
+
+   | 特性             | QSqlTableModel | QSqlRelationalTableModel       |
+   | -------------- | -------------- | ------------------------------ |
+   | 单表 CRUD        | ✔️             | ✔️                             |
+   | 外键关联显示         | ❌              | ✔️                             |
+   | 支持 Mapper      | ✔️             | ✔️                             |
+   | 显示 ComboBox 编辑 | ❌              | ✔️ (需要 QSqlRelationalDelegate) |
+   | 多表 JOIN / 聚合   | ❌              | ❌                              |
+   | 手写 SQL         | 可选             | 可选                             |
+
+
+```
+model = QSqlRelationalTableModel()
+model.setTable("employee")
+model.setRelation(2, QSqlRelation("department", "deptId", "deptName"))
+model.select()
+
+view.setModel(model)
+view.setItemDelegate(QSqlRelationalDelegate(view))
+```
+
+## QSqlQuery
+
+- 它可以执行任意SQL，包括复杂查询 / JOIN / 聚合 / 自定义事务，直接与数据库交互，其实QSqlTableModel、QSqlQueryModel内部最终也调用 QSqlQuery 来执行 SQL，与QSqlTableModel 不同的是：
+
+   | 类              | 优势                          | 劣势                |
+   | -------------- | --------------------------- | ----------------- |
+   | QSqlTableModel | 直接映射单表，Mapper 自动更新控件，易用     | 只能单表，复杂查询难        |
+   | QSqlQuery      | 万能 SQL，支持复杂 JOIN / 聚合 / 子查询 | 需要手写 SQL，UI 不自动绑定 |
+
+- QSqlQuery 的典型使用流程
+   ```
+   1️⃣ 创建 Query
+   query = QSqlQuery(db)  # db 是 QSqlDatabase 对象
+   2️⃣ 执行 SQL
+   query.exec("SELECT id, name, salary FROM employee WHERE salary > 5000")
+   3️⃣ 遍历结果集
+   while query.next():
+      id = query.value(0)       # 按列索引
+      name = query.value("name")# 按字段名
+      salary = query.value(2)
+      print(id, name, salary)
+   4️⃣ 获取字段元信息
+   rec = query.record()  # QSqlRecord 对象
+   print(rec.count())    # 字段数量
+   print(rec.fieldName(1))  # 字段名
+   5️⃣ 参数化 SQL（防止注入）
+   query.prepare("INSERT INTO employee(name, salary) VALUES(?, ?)")
+   query.addBindValue("张三")
+   query.addBindValue(5000)
+   query.exec()
+
+   query.prepare("UPDATE employee SET salary=:s WHERE id=:i")
+   query.bindValue(":s", 5500)
+   query.bindValue(":i", 1)
+   query.exec()
+   6️⃣ 支持 DDL / DML
+   query.exec("CREATE TABLE test(id INTEGER PRIMARY KEY, name TEXT)")
+   query.exec("DELETE FROM employee WHERE id=10")
+   ```
+
+## QSqlRecord
+
+- 代表数据库的一行记录的对象，只负责描述、存储一行数据（字段名、类型、值），被 Query 和 Model 用来读写数据库，也是 Mapper 修改数据时的中转站。类似这样：
+   ```
+   [
+      字段0: name="id",    type=Int,    value=1
+      字段1: name="name",  type=String, value="张三"
+      字段2: name="age",   type=Int,    value=18
+   ]
+   ```
+- 常用方法：
+   - record.count()
+   - record.fieldName(i)
+   - record.indexOf("name")
+   - record.value("name")
+   - record.setValue("name", "李四")
+   - record.isNull("age")
+- 从哪里获取：
+   - 从 QSqlQuery 里取
+   ```
+   query.exec("SELECT * FROM student")
+   query.next()
+   record = query.record()
+   ```
+   - 从 QSqlTableModel 里取
+   ```
+   record = model.record(row)
+   ```
+   - 用于“插入新行”
+   ```
+   record = model.record()
+   record.setValue("name", self.editName.text())
+   record.setValue("age", int(self.editAge.text()))
+
+   if not model.insertRecord(-1, record):
+      print(model.lastError().text())
+   else:
+      model.submitAll()
+   ```
+
+## QSqlField
+
+- 是数据库字段的封装，它存储 字段名、类型、值、是否为空、是否只读 等信息。QSqlRecord是QSqlField 的集合（一行数据）。Mapper / TableModel / Record 都会用到它
+
+- 核心属性
+   ```
+   field.name()  # 获取字段名
+   field.setName("Salary")
+   field.type()  # 返回 QVariant.Type，例如 Int, String
+   field.setType(QVariant.Int)
+   field.value()  # 返回当前值
+   field.setValue(5000)  # 修改值
+   field.isNull()
+   field.setNull(True)
+   field.isReadOnly()
+   field.setReadOnly(True)
+   ```
+- 案例
+   ```
+   record = model.record(0)      # 第一行
+   field = record.field("Salary") # 拿 Salary 字段
+   print(field.value())           # 5000
+   
+   field.setValue(5500)
+   record.setValue("Salary", field.value())
+
+   获取字段名和类型
+   record = model.record()
+   for i in range(record.count()):
+      field = record.field(i)
+      print(field.name(), field.type())
+
+   修改单个字段的值
+   record = model.record(row)
+   field = record.field("Salary")
+   field.setValue(field.value() * 1.1)
+   record.setValue("Salary", field.value())
+   model.setRecord(row, record)
+   ```
