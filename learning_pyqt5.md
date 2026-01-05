@@ -1271,3 +1271,561 @@ view.setItemDelegate(QSqlRelationalDelegate(view))
    record.setValue("Salary", field.value())
    model.setRecord(row, record)
    ```
+
+# 文件IO
+
+## QFile
+
+- QFile 继承自 QIODevice，支持字节级（bytes）read、write，写二进制文件，要自己处理编码的decode / encode，较底层
+
+```
+from PyQt5.QtCore import QFile, QIODevice
+
+file = QFile("raw.txt")
+file.open(QIODevice.WriteOnly)
+
+file.write(b"hello\n")
+file.write("中文\n".encode("utf-8"))
+
+file.close()
+
+
+file = QFile("raw.txt")
+file.open(QIODevice.ReadOnly)
+
+data = file.readAll()   # QByteArray
+text = bytes(data).decode("utf-8")
+
+print(text)
+
+file.close()
+```
+
+## QTextStream
+
+- 在 QIODevice 之上，专门用于“文本”的读写工具（QTextStream相当于“文本规则层”），解决了编码、解码、换行、类型转字符串等事情，但使用时必须显式设编码
+
+   | 能力                | QTextStream |
+   | ----------------- | ----------- |
+   | 编码处理（UTF-8/GBK）   | ✅           |
+   | int / float → 字符串 | ✅           |
+   | 自动换行处理            | ✅           |
+   | 按行 / 按文本读取        | ✅           |
+- QTextStream 本身不操作文件（非直接加载文件，QFile负责加载）、基于QIODevice进行构建，如stream = QTextStream(qfile)
+- 适用于QTextStream
+   - ✅ 日志
+   - ✅ 配置文件
+   - ✅ CSV
+   - ✅ 临时调试输出
+   - ✅ 你希望“用记事本打开能看懂”
+- 不适用于QTextStream（应用QDataStream）
+  - ❌ 保存程序状态
+  - ❌ 二进制协议
+  - ❌ 大量数据
+  - ❌ 性能敏感场景
+  
+```
+# -*- coding: utf-8 -*-
+import sys
+from PyQt5.QtCore import QFile, QIODevice, QTextStream
+
+
+FILE_NAME = "qtextstream_test.txt"
+
+
+def write_text():
+    """覆盖写入文本"""
+    file = QFile(FILE_NAME)
+
+    if not file.open(QIODevice.WriteOnly | QIODevice.Text):
+        print("write open failed")
+        return
+
+    stream = QTextStream(file)
+    stream.setAutoDetectUnicode(True)
+    stream.setCodec("UTF-8")
+
+    stream << "=== QTextStream 写入测试 ===\n"
+    stream << "整数: " << 123 << "\n"
+    stream << "浮点数: " << 3.14 << "\n"
+    stream << "中文: 你好 Qt\n"
+
+    file.close()
+    print("write_text done")
+
+
+def append_text():
+    """追加写入文本"""
+    file = QFile(FILE_NAME)
+
+    if not file.open(QIODevice.WriteOnly | QIODevice.Append | QIODevice.Text):
+        print("append open failed")
+        return
+
+    stream = QTextStream(file)
+    stream.setAutoDetectUnicode(True)
+    stream.setCodec("UTF-8")
+
+    stream << "=== 追加内容 ===\n"
+    stream << "再来一行\n"
+
+    file.close()
+    print("append_text done")
+
+
+def read_by_line():
+    """按行读取文本"""
+    file = QFile(FILE_NAME)
+
+    if not file.open(QIODevice.ReadOnly | QIODevice.Text):
+        print("read open failed")
+        return
+
+    stream = QTextStream(file)
+    stream.setCodec("UTF-8")
+
+    print("\n--- 按行读取 ---")
+    while not stream.atEnd():
+        line = stream.readLine()
+        print(line)
+
+    file.close()
+
+
+def read_all():
+    """一次性读取全部文本"""
+    file = QFile(FILE_NAME)
+
+    if not file.open(QIODevice.ReadOnly | QIODevice.Text):
+        print("read open failed")
+        return
+
+    stream = QTextStream(file)
+    stream.setCodec("UTF-8")
+
+    content = stream.readAll()
+    print("\n--- readAll ---")
+    print(content)
+
+    file.close()
+
+
+def main():
+    write_text()
+    append_text()
+    read_by_line()
+    read_all()
+
+
+if __name__ == "__main__":
+    main()
+
+```
+  ## QDataStream
+
+- 是Qt提供的「二进制序列化流」，它解决的是：
+   - 如何把“变量 / 结构 / 对象”
+   - 稳定、精确、跨平台
+   - 写进文件 / 内存 / 网络
+   - 不是给人看的，是给程序看的
+- 构建方式同QTextStream，二进制方式读写且顺序需一致
+
+| 维度   | QTextStream | QDataStream |
+| ---- | ----------- | ----------- |
+| 数据形态 | 文本          | 二进制         |
+| 是否可读 | 人可读         | 不可读         |
+| 编码   | UTF-8 / 编码  | ❌           |
+| 类型安全 | ❌           | ✅           |
+| 跨平台  | 一般          | ✅           |
+| 典型用途 | cfg / log   | cache / 状态  |
+
+### 非字节类型
+
+```
+from PyQt5.QtCore import QFile, QIODevice, QDataStream
+
+FILE = "qdatastream_test.bin"
+
+def write_data():
+    file = QFile(FILE)
+    file.open(QIODevice.WriteOnly)
+
+    out = QDataStream(file)
+  #  out.setVersion(QDataStream.Qt_5_15)
+
+    out.writeInt32(100)
+    out.writeDouble(9.99)
+    out.writeQString("Hello Binary")
+
+    file.close()
+
+def read_data():
+    file = QFile(FILE)
+    file.open(QIODevice.ReadOnly)
+
+    stream = QDataStream(file)
+  #  stream.setVersion(QDataStream.Qt_5_15)
+
+    print(stream.readInt32())
+    print(stream.readDouble())
+    print(stream.readQString())
+
+    file.close()
+
+write_data()
+read_data()
+```
+
+### RawData
+
+- 是不做任何解释的原始字节，不管类型、不管编码、不管结构、原样写，原样读。QDataStream 临时“退化”为 QIODevice。
+
+| 方法                         | 作用          |
+| -------------------------- | ----------- |
+| `writeRawData(char*, len)` | 写入原始字节      |
+| `readRawData(char*, len)`  | 读取指定长度字节    |
+| `QByteArray`               | 字节容器（最常配合）  |
+
+- writeRawData / readRawData不存长度、不存类型、不存版本，必须自己知道该读多少字节，使用QByteArray作为字节容器
+
+- rawData 的典型用途：
+   - ✅ 写固定长度结构
+   - ✅ 写 C 结构体镜像
+   - ✅ 处理硬件 / 协议帧
+   - ❌ 不适合动态数据
+```
+from PyQt5.QtCore import QFile, QIODevice, QDataStream, QByteArray
+
+data = QByteArray(b'\x01\x02\x03\x04')
+
+file = QFile("raw.bin")
+if not file.open(QIODevice.WriteOnly):
+    print("open failed")
+    exit()
+
+out = QDataStream(file)
+
+# PyQt5 里只需要传一个参数
+out.writeRawData(data)   # ✅ 这里传整个 QByteArray 就行
+
+file.close()
+
+file = QFile("raw.bin")
+if not file.open(QIODevice.ReadOnly):
+    print("open failed")
+    exit()
+
+stream = QDataStream(file)
+
+# 读取时需要给一个长度参数，返回 bytes
+buf = stream.readRawData(4)   # 读 4 个字节
+print(buf)                    # b'\x01\x02\x03\x04'
+
+file.close()
+
+file = QFile("raw.bin")
+if not file.open(QIODevice.ReadOnly):
+    print("open failed")
+    exit()
+
+stream = QDataStream(file)
+
+# 读取时需要给一个长度参数，返回 bytes
+buf = stream.readRawData(4)   # 读 4 个字节
+print(buf)                    # b'\x01\x02\x03\x04'
+
+file.close()
+
+```
+
+### bytes
+
+- Qt 风格“安全字节块”，QT自动帮你写入长度，读取时自动知道读多少，但要注意rawData 和 bytes 是两套完全不同的api。99% 场景：用 bytes，不用 rawData
+
+| 方法                         | 作用          |
+| -------------------------- | ----------- |
+| `writeBytes(data, len)`    | 写入「带长度」的字节块 |
+| `readBytes()`              | 读取「带长度」的字节块 |
+
+- bytes 的典型用途（工程常用）
+   - ✅ 网络包
+   - ✅ 压缩数据
+   - ✅ 图片 / 文件片段
+   - ✅ 自定义 block
+
+| 对比点   | rawData | bytes |
+| ----- | ------- | ----- |
+| 是否存长度 | ❌       | ✅     |
+| 是否安全  | ❌       | ✅     |
+| 是否推荐  | ⚠️ 特定场景 | ✅     |
+| 易错率   | 高       | 低     |
+| 典型用途  | 固定结构    | 动态数据  |
+
+
+```
+from PyQt5.QtCore import QFile, QIODevice, QDataStream, QByteArray
+
+# ---------- 写 ----------
+payload = QByteArray(b'hello world')
+
+file = QFile("bytes.bin")
+file.open(QIODevice.WriteOnly)
+
+stream = QDataStream(file)
+stream.writeBytes(payload)   # ✅ PyQt5 写法
+
+file.close()
+
+# ---------- 读 ----------
+file = QFile("bytes.bin")
+file.open(QIODevice.ReadOnly)
+
+stream = QDataStream(file)
+data = stream.readBytes()    # ✅ PyQt5 读法
+print(data)                  # b'hello world'
+
+file.close()
+```
+
+### struct.pack
+
+- struct.pack 用于 Python 原生二进制操作，文件、socket、内存缓冲区
+- QDataStream 用于 Qt 内部数据流，文件、QByteArray、网络
+- 两者逻辑类似，都是把“值 → bytes → 存储 / 网络”，区别在语言/平台的接口和字节序管理
+
+```
+# -*- coding: utf-8 -*-
+import struct
+from PyQt5.QtCore import QFile, QIODevice, QDataStream
+
+# ---------------------------
+# Python 原生方式写二进制
+# ---------------------------
+file_name = "cross_bin.dat"
+
+with open(file_name, "wb") as f:
+    # 写 4 字节小端整数
+    f.write(struct.pack("<i", 123))
+    # 写 8 字节小端 double
+    f.write(struct.pack("<d", 3.1415926))
+    # 写字符串，先写长度，再写字节
+    text = "你好 Qt"
+    text_bytes = text.encode("utf-8")
+    f.write(struct.pack("<I", len(text_bytes)))  # 写长度 uint32
+    f.write(text_bytes)                           # 写字符串内容
+
+print("Python 写入完成")
+
+# ---------------------------
+# PyQt5 QDataStream 读取
+# ---------------------------
+file = QFile(file_name)
+if not file.open(QIODevice.ReadOnly):
+    print("打开文件失败")
+    exit()
+
+stream = QDataStream(file)
+# 设置小端模式，对应 Python struct.pack("<…")
+stream.setByteOrder(QDataStream.LittleEndian)
+# Qt5 默认版本
+# stream.setVersion(QDataStream.Qt_5_15)
+
+# 1️⃣ 读整数
+num = stream.readInt32()
+print("整数:", num)
+
+# 2️⃣ 读 double
+pi = stream.readDouble()
+print("浮点数:", pi)
+
+# 3️⃣ 读字符串
+length = stream.readUInt32()              # 先读取长度
+text_bytes = stream.readRawData(length)   # 再读取对应字节
+text_str = text_bytes.decode("utf-8")
+print("字符串:", text_str)
+
+file.close()
+```
+
+```
+import struct
+from PyQt5.QtCore import QFile, QIODevice, QDataStream
+
+
+with open("data.bin", "wb") as f:
+    f.write(struct.pack("i", 123))    # 写 4 字节整数
+    f.write(struct.pack("f", 3.14))   # 写 4 字节浮点
+
+with open("data.bin", "rb") as f:
+    b = f.read(4)
+    val = struct.unpack("i", b)[0]
+    print(val)  # 123
+```
+
+```
+import struct
+from PyQt5.QtCore import QFile, QIODevice, QDataStream
+
+# 写入文件
+file = QFile("struct.bin")
+file.open(QIODevice.WriteOnly)
+
+stream = QDataStream(file)
+payload = struct.pack("<i", 123)  # 小端 int
+stream.writeRawData(payload)       # 写入原始字节
+
+file.close()
+
+
+file = QFile("struct.bin")
+file.open(QIODevice.ReadOnly)
+stream = QDataStream(file)
+
+buf = stream.readRawData(4)
+val = struct.unpack("<i", buf)[0]
+print(val)  # 123
+file.close()
+```
+
+### 大小端
+
+- 多字节数据在内存或文件中存储的顺序。例如：一个 32 位整数 0x12345678
+
+| 存储顺序                      | 内存 / 文件排列     | 解释         |
+| ------------------------- | ------------- | ---------- |
+| **大端 Big Endian (BE)**    | `12 34 56 78` | 高位字节存储在低地址 |
+| **小端 Little Endian (LE)** | `78 56 34 12` | 低位字节存储在低地址 |
+
+- 不同平台 CPU 默认字节序不同，否则就会出现 数字错位 或 乱码。
+   - x86/x64 → 小端，文件本地存储通常使用
+   - 网络协议 / 某些硬件 → 大端
+   - 跨语言 / 跨工具读写二进制文件时必须一致
+   - Python struct.pack('<i', 100) 写小端
+   - Qt QDataStream.readInt32() 必须设置小端才能读正确
+- Python struct.pack 中的大小端
+
+| 前缀  | 含义                |
+| --- | ----------------- |
+| `<` | 小端（Little Endian） |
+| `>` | 大端（Big Endian）    |
+| `!` | 网络字节序（Big Endian） |
+| `=` | 本机字节序             |
+| `@` | 本机字节序 + 对齐        |
+
+```
+import struct
+
+n = 0x12345678
+
+# 小端
+b_le = struct.pack('<I', n)   # b'\x78\x56\x34\x12'
+# 大端
+b_be = struct.pack('>I', n)   # b'\x12\x34\x56\x78'
+
+print(b_le)
+print(b_be)
+```
+
+```
+from PyQt5.QtCore import QDataStream
+
+stream = QDataStream()
+# 小端
+stream.setByteOrder(QDataStream.LittleEndian)
+# 大端
+stream.setByteOrder(QDataStream.BigEndian)
+```
+
+```
+import struct
+from PyQt5.QtCore import QFile, QIODevice, QDataStream
+
+# 写入 32 位整数
+with open("endian.bin", "wb") as f:
+    f.write(struct.pack("<i", 0x12345678))  # 小端写入
+
+# Qt 读取
+file = QFile("endian.bin")
+file.open(QIODevice.ReadOnly)
+stream = QDataStream(file)
+stream.setByteOrder(QDataStream.LittleEndian)  # 一定要匹配
+val = stream.readInt32()
+print(hex(val))  # 输出 0x12345678
+file.close()
+```
+
+## QFileSystemWatcher
+
+- 监听文件和目录变化的 Qt 类，可以监控 单个文件 或 整个目录
+- 只要被监控对象发生修改、创建、删除、重命名，就会触发 信号
+- 跨平台（Windows / Linux / macOS），主要用在 GUI / 实时更新 / 配置热加载 / 文件同步 场景
+- 核心用途
+   - 实时监控配置文件 → 自动 reload
+   - 目录变化监控 → 文件添加 / 删除触发事件
+   - 日志实时显示 → 文件追加更新
+   - 自动构建 / 自动部署工具
+- 核心 API
+
+| 方法                  | 功能             |
+| ------------------- | -------------- |
+| `addPath(path)`     | 添加单个文件或目录到监控列表 |
+| `addPaths([paths])` | 批量添加文件或目录      |
+| `removePath(path)`  | 移除监控           |
+| `files()`           | 返回正在监控的文件列表    |
+| `directories()`     | 返回正在监控的目录列表    |
+
+- 使用技巧
+   - 文件和目录的信号是分开的，fileChanged → 单个文件，directoryChanged → 目录内增删改，目录变化信号不会递归，默认监控当前目录，子目录不会自动监控，需要递归添加
+   - 防止重复触发，有些系统会触发多次 fileChanged，可以加一个 定时器/去抖机制，特别是写入大文件或频繁保存文件
+   - 跨平台行为略不同，Windows → 高性能，文件修改/删除都能触发，Linux/macOS → 有时删除/重命名可能只触发一次，需要测试
+- 结合 GUI 的实用场景
+   - 文本编辑器 → 文件被外部修改，自动 reload
+   - 图片浏览器 → 文件夹新增图片，列表实时刷新
+   - 配置热加载 → app 不用重启，配置文件修改就生效
+
+监控单个文件
+
+```
+from PyQt5.QtCore import QFileSystemWatcher, QCoreApplication
+import sys
+
+app = QCoreApplication(sys.argv)
+
+watcher = QFileSystemWatcher()
+
+file_path = "test.txt"
+watcher.addPath(file_path)
+
+def on_file_changed(path):
+    print(f"文件被修改: {path}")
+
+watcher.fileChanged.connect(on_file_changed)
+
+print(f"开始监控文件: {file_path}")
+sys.exit(app.exec_())
+```
+监控目录（未测试）
+
+```
+from PyQt5.QtCore import QFileSystemWatcher, QCoreApplication
+import sys
+import os
+
+app = QCoreApplication(sys.argv)
+
+watcher = QFileSystemWatcher()
+
+dir_path = "myfolder"
+os.makedirs(dir_path, exist_ok=True)
+
+watcher.addPath(dir_path)
+
+def on_dir_changed(path):
+    print(f"目录变化: {path}")
+    print("目录内容:", os.listdir(path))
+
+watcher.directoryChanged.connect(on_dir_changed)
+
+print(f"开始监控目录: {dir_path}")
+sys.exit(app.exec_())
+```
